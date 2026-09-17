@@ -88,7 +88,11 @@ def _iter_jsonl(path: Path, id_base: Path) -> Iterator[Document]:
             if not text:
                 logger.warning("skipping empty json document in %s:%s", path, line_no)
                 continue
-            doc_id = obj.get("id") or obj.get("doc_id") or f"{_doc_id(path, id_base)}:{line_no}"
+            doc_id = (
+                obj.get("id")
+                or obj.get("doc_id")
+                or f"{_doc_id(path, id_base)}:{line_no}"
+            )
             yield Document(doc_id=str(doc_id), path=path, text=text)
 
 
