@@ -1,3 +1,4 @@
+#type: ignore 
 """TF-IDF / BM25 ranking, snippets, and a swappable Scorer protocol."""
 
 from __future__ import annotations

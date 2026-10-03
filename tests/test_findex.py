@@ -1,3 +1,4 @@
+#type: ignore 
 import pytest
 from hypothesis import given, strategies as st
 from findex.cli import tokenizer

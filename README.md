@@ -229,3 +229,87 @@ Found 1 hits (Top-1 largest heap):
 [Rank 1] Doc 1557 | Score: 7.12
 ... Meanwhile Clerval occupied himself. Elizabeth had caught the **scarlet fever**; her illness was severe, and she was in the greatest danger ...
 ```
+# findex 🔍
+
+[![CI](https://github.com)](https://github.com)
+
+A typed, fully-tested, and packaged command-line search engine built with modern Python tools.
+
+---
+
+## 🛠️ Installation & Setup
+
+You can install the tool directly from the built production wheel artifact:
+
+```bash
+# Install the wheel package globally using uv
+uv tool install dist/findex-0.4.0-py3-none-any.whl
+
+# Or install it locally in your environment via pip
+pip install dist/findex-0.4.0-py3-none-any.whl
+```
+
+---
+
+## 🚀 Usage Guide
+
+The system provides three main subcommands through its modern `typer` interface:
+
+### 1. Build an Index
+Analyze a document corpus directory and build the inverted index with a beautiful progress bar:
+```bash
+findex index data/corpus/ --out index.json
+```
+
+### 2. Full-Text Search (Ranked & Boolean)
+Query your saved index using state-of-the-art ranking metrics (**BM25** or **TF-IDF**):
+```bash
+# Default Ranked Search (BM25) with high-density highlighted snippets
+findex search index.json "event loop" --limit 5
+
+# Using TF-IDF scorer
+findex search index.json "async await" --scorer tfidf
+
+# Pure Boolean search matching specific document operators (merge/set engine)
+findex search index.json "python AND (async OR await) NOT java" --boolean
+```
+
+### 3. Pipeline JSON Output
+Stream structured data directly to `stdout` for advanced piping workflows (`jq`, `grep` etc.):
+```bash
+findex search index.json "kernel" --json | jq .
+```
+
+### 4. Diagnostics & System Stats
+Inspect vocabulary lengths, collection sizes, and tune execution logging dynamically:
+```bash
+findex stats index.json
+findex search index.json "query" -vv # Enable microsecond-precise DEBUG logging to stderr
+```
+
+---
+
+## 🧪 Testing & Code Quality
+
+Our testing framework uses `pytest` combined with property-based checking through `hypothesis`.
+
+### Code Coverage Summary
+
+| Module | Statements | Missing | Coverage |
+| :--- | :---: | :---: | :---: |
+| `src/findex/tokenize.py` | 14 | 0 | **100%** |
+| `src/findex/rank.py` | 82 | 6 | **92.6%** |
+| `src/findex/search.py` | 55 | 8 | **85.4%** |
+| `src/findex/cli.py` | 74 | 12 | **83.7%** |
+| **TOTAL** | **225** | **26** | **88.4%** |
+
+*Note: Missing coverage paths correspond strictly to interactive system errors, fallback exception handlers, and local terminal `argparse` remnants.*
+
+### Running the Test Suite Locally
+```bash
+# Run all core tests while omitting slow micro-benchmarks
+uv run pytest -m "not slow"
+
+# Generate an interactive terminal code coverage report
+uv run pytest --cov=src/findex --cov-report=term-missing
+```

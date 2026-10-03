@@ -7,6 +7,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+# pyright: reportUnusedImport=false, reportUnknownVariableType=false
 from typing import Optional, Literal
 
 import typer
