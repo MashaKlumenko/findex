@@ -1,32 +1,5 @@
 [project]
 name = "findex"
-version = "0.1.0"
-description = "A full-text search engine built across a Python course — Lab 3 is ranking and the object model."
-readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
-
-[project.optional-dependencies]
-dev = ["ruff", "pytest"]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.ruff]
-src = ["src", "tests"]
-line-length = 88
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-
-[project]
-name = "findex"
 version = "0.4.0"
 description = "A typed and tested command-line search engine."
 readme = "README.md"
@@ -39,6 +12,10 @@ dependencies = [
 [project.scripts]
 findex = "findex.cli:app"
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
@@ -48,15 +25,22 @@ dev = [
     "hypothesis>=6.100.0",
 ]
 
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 addopts = "--cov=src/findex --cov-report=term-missing"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
-
-[project.scripts]
-findex = "findex.cli:app"
