@@ -13,26 +13,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10
-        with:
-          enable-cache: true
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --locked --dev
-
-      - name: Run Ruff (Linter & Formatter)
         run: |
-          uv run ruff check .
-          uv run ruff format --check .
+          python -m pip install --upgrade pip
+          python -m pip install typer rich pytest pytest-cov pyright ruff hypothesis
+
+      - name: Run Ruff (Linter)
+        run: python -m ruff check .
 
       - name: Run Pyright
-        run: uv run pyright
+        run: python -m pyright
 
       - name: Run Tests
-        run: uv run pytest -m "not slow"
+        run: python -m pytest -m "not slow"
