@@ -9,12 +9,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from findex.index import Index
+from findex.rank import SearchResult, get_scorer, ranked_search
 from findex.stats import format_bytes
-from findex.store import load
-from findex.tokenize import tokenize
-
-# Токенізатор з Лаби 1 робить lowercase, тому оператори мають бути в нижньому регістрі
-OPERATORS = frozenset({"and", "or", "not"})
+from findex.store import open_index
 
 
 def merge_and(left: Sequence[int], right: Sequence[int]) -> list[int]:
@@ -91,46 +88,28 @@ def set_not(left: Sequence[int], right: Sequence[int]) -> list[int]:
     return sorted(set(left) - set(right))
 
 
-def _ops(engine: str) -> tuple:
-    if engine == "set":
-        return set_and, set_or, set_not
-    if engine == "merge":
-        return merge_and, merge_or, merge_not
-    raise ValueError(f"unknown engine {engine!r}")
-
-
-def search(index: Index, query: str, *, engine: str = "merge") -> list[int]:
-    """Evaluate ``query`` left-to-right; return matching ``doc_id``s."""
-    tokens = list(tokenize(query))
-    if not tokens:
+def boolean_search(index: Index, query: str, *, engine: str = "merge") -> list[int]:
+    """Evaluate a Boolean query; return matching ``doc_id``s (Lab 2)."""
+    if not query.strip():
         return []
+    from findex.query import parse
 
-    and_op, or_op, not_op = _ops(engine)
-    universe = list(range(index.n_docs()))
-    result: list[int] | None = None
-    pending = "and"
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok in OPERATORS:
-            pending = tok
-            i += 1
-            continue
-        docs = index.doc_ids_for(tok)
-        if result is None:
-            result = not_op(universe, docs) if pending == "not" else docs
-        elif pending == "or":
-            result = or_op(result, docs)
-        elif pending == "not":
-            result = not_op(result, docs)
-        else:
-            result = and_op(result, docs)
-        pending = "and"
-        i += 1
+    return parse(query).evaluate(index, engine=engine)
 
-    if result is None:
-        return []
-    return list(result)
+
+def search(
+    index: Index,
+    query: str,
+    *,
+    engine: str = "merge",
+    scorer=None,
+    k: int = 10,
+    snippets: bool = True,
+) -> list[int] | list[SearchResult]:
+    """Boolean ids when ``scorer`` is omitted; ranked ``SearchResult``s otherwise."""
+    if scorer is not None:
+        return ranked_search(index, query, scorer=scorer, k=k, snippets=snippets)
+    return boolean_search(index, query, engine=engine)
 
 
 def format_hit(index: Index, doc_id: int) -> str:
@@ -141,8 +120,7 @@ def format_hit(index: Index, doc_id: int) -> str:
 
 
 def _term_dfs(index: Index) -> list[tuple[str, int]]:
-    # Використовуємо наш новий метод df_term заміність df
-    rows = [(term, index.df_term(term)) for term in index.postings]
+    rows = [(term, index.df(term)) for term in index]
     rows.sort(key=lambda item: item[1], reverse=True)
     return rows
 
@@ -184,7 +162,7 @@ def benchmark_engines(index: Index, *, repeat: int = 30) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Boolean search over a saved index.")
+    parser = argparse.ArgumentParser(description="Boolean or ranked search over a saved index.")
     parser.add_argument(
         "index",
         type=Path,
@@ -194,20 +172,35 @@ def main(argv: list[str] | None = None) -> int:
         "query",
         nargs="?",
         default=None,
-        help='query string, e.g. "elizabeth darcy" or "holmes OR watson"',
+        help='query string, e.g. python AND (async OR await) NOT java "event loop"',
     )
     parser.add_argument(
         "--engine",
         choices=("merge", "set"),
         default="merge",
-        help="two-pointer merge (default) or Python set algebra",
+        help="two-pointer merge (default) or Python set algebra (Boolean mode)",
+    )
+    parser.add_argument(
+        "--boolean",
+        action="store_true",
+        help="return an unranked id list (Lab 2) instead of TF-IDF/BM25",
+    )
+    parser.add_argument(
+        "--scorer",
+        choices=("bm25", "tfidf"),
+        default="bm25",
+        help="ranking function (ignored with --boolean)",
     )
     parser.add_argument(
         "--limit",
         type=int,
-        default=20,
+        default=10,
         metavar="N",
-        help="max hits to print",
+        help="top-k results (ranked) or max hits to print (Boolean)",
+    )
+    parser.add_argument(
+        "--no-snippets",
+        action="store_true",
     )
     parser.add_argument(
         "--bench",
@@ -220,51 +213,77 @@ def main(argv: list[str] | None = None) -> int:
         default=30,
         help="repetitions per --bench cell",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show @timed and lru_cache hit/miss lines",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
 
     tracemalloc.start()
     t0 = time.perf_counter()
-    index = load(args.index)
-    load_elapsed = time.perf_counter() - t0
-    _, peak = tracemalloc.get_traced_memory()
+    with open_index(args.index) as index:
+        load_elapsed = time.perf_counter() - t0
+        _, peak = tracemalloc.get_traced_memory()
 
-    print(f"loaded:         {args.index}")
-    print(f"documents:      {index.n_docs()}")
-    print(f"vocabulary:     {len(index.postings)}")
-    print(f"load elapsed:   {load_elapsed:.3f} s")
-    print(f"peak memory:    {format_bytes(peak)} ({peak} bytes)")
+        print(f"loaded:         {args.index}")
+        print(f"index:          {index!r}")
+        print(f"documents:      {index.num_docs}")
+        print(f"vocabulary:     {len(index)}")
+        print(f"load elapsed:   {load_elapsed:.3f} s")
+        print(f"peak memory:    {format_bytes(peak)} ({peak} bytes)")
 
-    if args.bench:
-        print()
-        for line in benchmark_engines(index, repeat=args.repeat):
-            print(line)
+        if args.bench:
+            print()
+            for line in benchmark_engines(index, repeat=args.repeat):
+                print(line)
 
-    if args.query is None:
-        if not args.bench:
-            parser.error("query is required unless --bench is set")
+        if args.query is None:
+            if not args.bench:
+                parser.error("query is required unless --bench is set")
+            tracemalloc.stop()
+            return 0
+
+        t1 = time.perf_counter()
+        if args.boolean:
+            hits = boolean_search(index, args.query, engine=args.engine)
+            search_elapsed = time.perf_counter() - t1
+            tracemalloc.stop()
+            print(f"engine:         {args.engine}")
+            print(f"query:          {args.query}")
+            print(f"hits:           {len(hits)}")
+            print(f"search elapsed: {search_elapsed:.6f} s")
+            print()
+            for doc_id in hits[: args.limit]:
+                print(format_hit(index, doc_id))
+            if len(hits) > args.limit:
+                print(f"... and {len(hits) - args.limit} more hits")
+            return 0
+
+        scorer = get_scorer(args.scorer)
+        results = ranked_search(
+            index,
+            args.query,
+            scorer=scorer,
+            k=args.limit,
+            snippets=not args.no_snippets,
+        )
+        search_elapsed = time.perf_counter() - t1
         tracemalloc.stop()
+        print(f"scorer:         {scorer!r}")
+        print(f"query:          {args.query}")
+        print(f"hits:           {len(results)}")
+        print(f"search elapsed: {search_elapsed:.6f} s")
+        print()
+        for row in results:
+            print(row)
         return 0
-
-    t1 = time.perf_counter()
-    hits = search(index, args.query, engine=args.engine)
-    search_elapsed = time.perf_counter() - t1
-    tracemalloc.stop()
-
-    print(f"engine:         {args.engine}")
-    print(f"query:          {args.query}")
-    print(f"hits:           {len(hits)}")
-    print(f"search elapsed: {search_elapsed:.6f} s")
-    print()
-    for doc_id in hits[: args.limit]:
-        print(format_hit(index, doc_id))
-    if len(hits) > args.limit:
-        print(f"... and {len(hits) - args.limit} more hits")
-    return 0
 
 
 if __name__ == "__main__":

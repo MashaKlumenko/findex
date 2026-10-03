@@ -7,7 +7,7 @@ from pathlib import Path
 from findex.corpus import iter_documents
 from findex.index import DocMeta, Posting, build_index
 from findex.search import merge_and, merge_not, merge_or, search
-from findex.store import load, save
+from findex.store import load, open_index, save
 
 
 def _tiny_corpus(tmp_path: Path) -> Path:
@@ -90,6 +90,51 @@ def test_pickle_and_json_roundtrip(tmp_path: Path) -> None:
         assert search(loaded, "red cat") == [0]
 
 
+def test_index_mapping_protocol(tmp_path: Path) -> None:
+    index = build_index(iter_documents(_tiny_corpus(tmp_path)))
+    assert len(index) == len(index.postings)
+    assert "cat" in index
+    assert "unicorn" not in index
+    assert index["cat"][0].doc_id == 0
+    assert set(index) == set(index.postings)
+    assert "Index(terms=" in repr(index)
+    assert "docs=3" in repr(index)
+    assert index.num_docs == 3
+    assert index.avg_doc_length == 3.0
+    assert index.doc_length(0) == 3
+    assert index.df("cat") == 2
+    assert index.df("unicorn") == 0
+    try:
+        index["unicorn"]
+        raise AssertionError("missing term should KeyError")
+    except KeyError:
+        pass
+
+
+def test_open_index_closes_on_exception(tmp_path: Path) -> None:
+    index = build_index(iter_documents(_tiny_corpus(tmp_path)))
+    path = tmp_path / "ix.pkl"
+    save(index, path)
+    try:
+        with open_index(path) as ix:
+            assert "cat" in ix
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert ix._closed is True
+    assert len(ix.postings) == 0
+
+
+def test_timed_preserves_names() -> None:
+    from findex.index import build_index
+    from findex.rank import ranked_search
+    from findex.store import load
+
+    assert build_index.__name__ == "build_index"
+    assert load.__name__ == "load"
+    assert ranked_search.__name__ == "ranked_search"
+
+
 def test_cli_index_and_search(tmp_path: Path, capsys) -> None:
     from findex.index import main as index_main
     from findex.search import main as search_main
@@ -99,7 +144,7 @@ def test_cli_index_and_search(tmp_path: Path, capsys) -> None:
     assert index_main([str(root), "--out", str(out)]) == 0
     captured = capsys.readouterr().out
     assert "documents:" in captured
-    assert search_main([str(out), "red cat", "--engine", "merge"]) == 0
+    assert search_main([str(out), "red cat", "--boolean", "--engine", "merge"]) == 0
     out_text = capsys.readouterr().out
     assert "hits:" in out_text
     assert "red cat sat" in out_text

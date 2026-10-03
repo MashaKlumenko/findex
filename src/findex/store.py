@@ -16,12 +16,25 @@ from __future__ import annotations
 import json
 import pickle
 from array import array
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from findex.index import DocMeta, Index, PlainPosting, Posting
+from findex.timing import timed
 
 PICKLE_SUFFIXES = {".pkl", ".pickle", ".bin"}
 JSON_FORMAT = "findex-json-v1"
+
+
+@contextmanager
+def open_index(path: Path | str) -> Iterator[Index]:
+    """Load an index and always ``close()`` it, including on exceptions."""
+    index = load(path)
+    try:
+        yield index
+    finally:
+        index.close()
 
 
 def save(index: Index, path: Path | str) -> None:
@@ -37,6 +50,7 @@ def save(index: Index, path: Path | str) -> None:
     raise ValueError(f"unknown index suffix {suffix!r}; use .pkl/.bin or .json")
 
 
+@timed
 def load(path: Path | str) -> Index:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -80,9 +94,8 @@ def _save_json(index: Index, path: Path) -> None:
     postings_json: dict[str, list] = {}
     for term, plist in index.postings.items():
         if index.representation == "array":
-            # plist — це один одновимірний масив array('I').
-            # Дампимо його в JSON як простий плаский список чисел.
-            postings_json[term] = list(plist)
+            ids, tfs = plist
+            postings_json[term] = [list(ids), list(tfs)]
         else:
             postings_json[term] = [_posting_row(p) for p in plist]
 
@@ -115,8 +128,11 @@ def _load_json(path: Path) -> Index:
     postings: dict = {}
     for term, raw_data in payload["postings"].items():
         if representation == "array":
-            # Відновлюємо єдиний плаский масив типу array('I') з JSON-списку чисел
-            postings[term] = array("I", (int(x) for x in raw_data))
+            ids_raw, tfs_raw = raw_data
+            postings[term] = (
+                array("I", (int(x) for x in ids_raw)),
+                array("I", (int(x) for x in tfs_raw)),
+            )
             continue
             
         rebuilt = []

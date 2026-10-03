@@ -13,13 +13,15 @@ import time
 import tracemalloc
 from array import array
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from itertools import islice
 from pathlib import Path
 
 from findex.corpus import Document, iter_documents
 from findex.stats import format_bytes
+from findex.timing import timed
 from findex.tokenize import tokenize
 
 logger = logging.getLogger(__name__)
@@ -55,53 +57,142 @@ class DocMeta:
     title: str
 
 
-@dataclass(slots=True)
-class Index:
-    """In-memory inverted index. Postings lists are sorted by ``doc_id``."""
+class Index(Mapping):
+    """Inverted index that behaves like a ``Mapping[str, postings]``.
 
-    postings: dict
-    doc_lengths: dict[int, int]
-    doc_meta: dict[int, DocMeta]
-    store_positions: bool = False
-    representation: str = "slots"
+    ``len(index)`` is vocabulary size; ``"python" in index`` tests the term;
+    ``index["python"]`` is the postings list (``KeyError`` if absent).
+    """
+
+    def __init__(
+        self,
+        postings: dict,
+        doc_lengths: dict[int, int],
+        doc_meta: dict[int, DocMeta],
+        store_positions: bool = False,
+        representation: str = "slots",
+    ) -> None:
+        self.postings = postings
+        self.doc_lengths = doc_lengths
+        self.doc_meta = doc_meta
+        self.store_positions = store_positions
+        self.representation = representation
+        self._closed = False
+        from findex.query import register_index
+
+        register_index(self)
+
+    def __getstate__(self) -> dict:
+        return {
+            "postings": self.postings,
+            "doc_lengths": self.doc_lengths,
+            "doc_meta": self.doc_meta,
+            "store_positions": self.store_positions,
+            "representation": self.representation,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        self.postings = state["postings"]
+        self.doc_lengths = state["doc_lengths"]
+        self.doc_meta = state["doc_meta"]
+        self.store_positions = state["store_positions"]
+        self.representation = state["representation"]
+        self._closed = False
+        from findex.query import register_index
+
+        register_index(self)
+
+    def __len__(self) -> int:
+        return len(self.postings)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.postings)
+
+    def __getitem__(self, term: str):
+        return self.postings[term]
+
+    def __repr__(self) -> str:
+        return f"Index(terms={len(self):_}, docs={self.num_docs:_})"
+
+    @property
+    def num_docs(self) -> int:
+        return len(self.doc_meta)
 
     def n_docs(self) -> int:
-        return len(self.doc_meta)
+        """Lab 2 alias for ``num_docs``."""
+        return self.num_docs
 
-    def df(self) -> int:
-        # Цей метод залишається без змін
-        return len(self.doc_meta)
+    @cached_property
+    def avg_doc_length(self) -> float:
+        if not self.doc_lengths:
+            return 0.0
+        return sum(self.doc_lengths.values()) / self.num_docs
 
-    def df_term(self, term: str) -> int:  # Перейменуємо або залишимо df
+    def doc_length(self, doc_id: int) -> int:
+        return self.doc_lengths[doc_id]
+
+    def df(self, term: str) -> int:
+        """Document frequency of ``term`` (0 if unknown)."""
         plist = self.postings.get(term)
         if not plist:
             return 0
         if self.representation == "array":
-            # Рахуємо кількість унікальних doc_id у пласкому масиві
-            count = 0
-            i = 0
-            while i < len(plist):
-                count += 1
-                tf = plist[i + 1]
-                # Пропускаємо doc_id, tf та всі позиції цього документа
-                i += 2 + (tf if self.store_positions else 0)
-            return count
+            return len(plist[0])
         return len(plist)
+
+    def df_term(self, term: str) -> int:
+        return self.df(term)
 
     def doc_ids_for(self, term: str) -> list[int]:
         """Sorted document ids that contain ``term`` (empty if unknown)."""
+        return [p.doc_id for p in self.iter_postings(term)]
+
+    def iter_postings(self, term: str) -> Iterator[Posting]:
         plist = self.postings.get(term)
         if not plist:
-            return []
+            return
         if self.representation == "array":
-            doc_ids = []
-            i = 0
-            while i < len(plist):
-                doc_ids.append(plist[i])
-                tf = plist[i + 1]
-                i += 2 + (tf if self.store_positions else 0)
-            return doc_ids
-        return [p.doc_id for p in plist]
+            ids, tfs = plist
+            for doc_id, tf in zip(ids, tfs, strict=False):
+                yield Posting(int(doc_id), int(tf), ())
+            return
+        yield from plist
+
+    def positions(self, term: str, doc_id: int) -> tuple[int, ...]:
+        for posting in self.iter_postings(term):
+            if posting.doc_id == doc_id:
+                return posting.positions
+        return ()
+
+    def document_text(self, doc_id: int) -> str:
+        meta = self.doc_meta.get(doc_id)
+        if meta is None:
+            return ""
+        path = Path(meta.path)
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return meta.title
+
+    def close(self) -> None:
+        """Drop postings so a ``with open_index`` block always frees RAM."""
+        if self._closed:
+            return
+        from findex.query import unregister_index
+
+        unregister_index(self)
+        self.postings.clear()
+        self.doc_lengths.clear()
+        self.doc_meta.clear()
+        self.__dict__.pop("avg_doc_length", None)
+        self._closed = True
+
+    def __enter__(self) -> Index:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.close()
+        return False
 
 
 def _title_from_document(doc: Document) -> str:
@@ -131,6 +222,7 @@ def _term_stats(
     return n, {term: (tf, ()) for term, tf in counts.items()}
 
 
+@timed
 def build_index(
     docs: Iterable[Document],
     *,
