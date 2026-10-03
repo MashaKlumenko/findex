@@ -118,6 +118,25 @@ def format_hit(index: Index, doc_id: int) -> str:
         return f"{doc_id}\t?"
     return f"{doc_id}\t{meta.title}"
 
+from typing import Literal
+from findex.rank import DocId
+
+def search_engine(
+    index: Index,  # додаємо об'єкт індексу як перший параметр, щоб логіка працювала
+    query: str, 
+    engine_type: Literal["boolean", "ranked"], 
+    scorer_type: Literal["bm25", "tfidf"],
+    k: int = 10
+) -> list[DocId]:
+    """High-level entrypoint that matches the requirements for the CLI."""
+    if engine_type == "boolean":
+        return boolean_search(index, query)
+    
+    # Для ranked дістаємо потрібний скорер і повертаємо список лише DocId
+    from findex.rank import get_scorer
+    scorer = get_scorer(scorer_type)
+    results = ranked_search(index, query, scorer=scorer, k=k)
+    return [hit.doc_id for hit in results]
 
 def _term_dfs(index: Index) -> list[tuple[str, int]]:
     rows = [(term, index.df(term)) for term in index]

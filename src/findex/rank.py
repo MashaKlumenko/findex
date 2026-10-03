@@ -10,12 +10,15 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from operator import itemgetter
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, Literal
 
 from findex.index import Index, Posting
 from findex.query import match_doc_ids, parse
 from findex.timing import timed
 from findex.tokenize import TOKEN_RE
+
+# Новий синтаксис PEP 695 для аліасів типів
+DocId = int
 
 
 @runtime_checkable
@@ -72,7 +75,8 @@ class BM25:
         return f"BM25(k1={self.k1}, b={self.b})"
 
 
-def get_scorer(name: str) -> Scorer:
+def get_scorer(name: Literal["tfidf", "bm25"] | str) -> Scorer:
+    """Get scorer instance by name. Strict Literal limits are added for CLI integration."""
     key = name.strip().lower()
     if key in {"tfidf", "tf-idf", "tf_idf"}:
         return TfIdf()
@@ -85,7 +89,7 @@ def get_scorer(name: str) -> Scorer:
 class SearchResult:
     """Ranked hit. ``order=True`` so ``sorted(results)`` is by score."""
 
-    doc_id: int = field(compare=False)
+    doc_id: DocId = field(compare=False)
     score: float
     title: str = field(compare=False)
     snippet: str = field(default="", compare=False)
@@ -137,7 +141,7 @@ def make_snippet(text: str, terms: Sequence[str], *, radius: int = 80) -> str:
 
 def _positive_terms(query: str) -> list[str]:
     try:
-        return parse(query).positive_terms()
+        return list(parse(query).positive_terms())
     except Exception:
         return []
 
@@ -161,7 +165,7 @@ def ranked_search(
         return []
     allowed = set(doc_ids)
     terms = _positive_terms(query)
-    scores: dict[int, float] = defaultdict(float)
+    scores: dict[DocId, float] = defaultdict(float)
     for term in terms:
         for posting in index.iter_postings(term):
             if posting.doc_id in allowed:

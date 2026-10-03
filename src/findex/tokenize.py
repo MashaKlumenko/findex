@@ -38,8 +38,6 @@ def tokenize(text: str) -> Iterator[str]:
     2. ``casefold`` for caseless matching (stronger than ``lower``).
     3. Stream matches with ``re.finditer``.
     """
-    if not text:
-        return
     normalized = unicodedata.normalize("NFC", text).casefold()
     for match in TOKEN_RE.finditer(normalized):
         yield match.group(0)
