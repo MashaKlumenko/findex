@@ -1,7 +1,7 @@
 [project]
 name = "findex"
 version = "0.1.0"
-description = "A full-text search engine built across a Python course — Lab 1 streams a corpus in constant memory."
+description = "A full-text search engine built across a Python course — Lab 2 is the inverted index."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
