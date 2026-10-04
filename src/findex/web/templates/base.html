@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}findex{% endblock %}</title>
+  <meta name="description" content="Search public-domain novels with BM25.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="4" y="6" width="16" height="20" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <rect x="10" y="4" width="16" height="20" rx="1.2" fill="var(--paper)" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M14 11h8M14 15h8M14 19h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <span class="word">fin<span>dex</span></span>
+    </a>
+    <p class="tagline">Search the novels</p>
+  </header>
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+  <footer class="colophon">
+    <p>Public-domain passages. Ranked with BM25 or TF-IDF. The index stays in memory.</p>
+  </footer>
+  <script>
+    document.addEventListener("keydown", function (event) {
+      var field = document.getElementById("q");
+      if (!field || event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      var tag = document.activeElement && document.activeElement.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      event.preventDefault();
+      field.focus();
+    });
+  </script>
+</body>
+</html>

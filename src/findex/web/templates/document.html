@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{% if missing %}Missing passage · findex{% else %}{{ title }} · findex{% endif %}{% endblock %}
+{% block body %}
+<article class="passage">
+  <p class="back"><a href="{{ back | default('/') }}">← Back to search</a></p>
+  {% if unloaded %}
+  <h1>Index not loaded</h1>
+  <p class="notice">The passage cannot be opened until <code>INDEX_PATH</code> is set and the server has started.</p>
+  {% elif missing %}
+  <h1>No passage {{ doc_id }}</h1>
+  <p class="notice">That id is not in this index.</p>
+  {% else %}
+  <h1>{{ title }}</h1>
+  <p class="muted">Passage {{ doc_id }} · {{ words }} words</p>
+  <div class="prose">{{ body | mark_text(q) }}</div>
+  {% endif %}
+</article>
+{% endblock %}

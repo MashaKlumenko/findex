@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{% if q %}{{ q }} · findex{% else %}findex{% endif %}{% endblock %}
+{% block body %}
+  <form class="search" action="/" method="get"
+        hx-get="/"
+        hx-target="#results"
+        hx-select="#results"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+        hx-sync="this:replace"
+        hx-trigger="submit, change from:#scorer, change from:#k, keyup changed delay:300ms from:#q">
+    <div class="query">
+      <label for="q">Query</label>
+      <div class="query-row">
+        <input id="q" name="q" type="search" value="{{ q }}" maxlength="200"
+               placeholder="elizabeth, or a phrase in quotes"
+               autocomplete="off" enterkeyhint="search"
+               {% if not q %}autofocus{% endif %}>
+        <button type="submit">Search<span class="pending" aria-hidden="true"></span></button>
+      </div>
+    </div>
+    <div class="controls">
+      <label class="choice">Scorer
+        <select id="scorer" name="scorer">
+          <option value="bm25" {% if scorer == "bm25" %}selected{% endif %}>BM25</option>
+          <option value="tfidf" {% if scorer == "tfidf" %}selected{% endif %}>TF-IDF</option>
+        </select>
+      </label>
+      <label class="choice">Per page
+        <select id="k" name="k">
+          {% for size in (5, 10, 20) %}
+          <option value="{{ size }}" {% if k == size %}selected{% endif %}>{{ size }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% if ready %}
+      <p class="corpus">{{ "{:,}".format(documents) }} passages · {{ "{:,}".format(vocabulary) }} terms</p>
+      {% else %}
+      <p class="corpus warn">Index not loaded</p>
+      {% endif %}
+    </div>
+  </form>
+  {% include "results.html" %}
+{% endblock %}

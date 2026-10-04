@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: findex
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: INDEX_PATH
+        value: /data/index.json
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHONUNBUFFERED
+        value: "1"

@@ -21,6 +21,12 @@ build/
 .coverage
 htmlcov/
 
+# Local configuration (INDEX_PATH, secrets). See .env.example.
+.env
+
+# Local binaries (oha) and scratch
+.tools/
+
 # OS / editor
 .DS_Store
 Thumbs.db

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import multiprocessing
+import os
 import sys
 import time
 import traceback
@@ -273,6 +274,39 @@ def crawl_command(
     summary.add_row("Wrote", str(out))
     summary.add_row("Log", str(log_path))
     console.print(summary)
+
+
+@app.command(name="serve")
+def serve_command(
+    port: int = typer.Option(8000, "--port", "-p", help="TCP port."),
+    workers: int = typer.Option(
+        1, "--workers", "-w", min=1, help="Uvicorn worker processes."
+    ),
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind address."),
+    index: Path | None = typer.Option(
+        None,
+        "--index",
+        "-i",
+        help="Index file. Exported as INDEX_PATH before workers start.",
+    ),
+) -> None:
+    """Serve the search API and web page.
+
+    The index path is configuration, so it lives in the environment.
+    ``--index`` only writes ``INDEX_PATH`` for this process and its workers.
+    """
+    if index is not None:
+        os.environ["INDEX_PATH"] = str(index.resolve())
+    import uvicorn
+
+    uvicorn.run(
+        "findex.web:app",
+        host=host,
+        port=port,
+        workers=workers,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+    )
 
 
 if __name__ == "__main__":

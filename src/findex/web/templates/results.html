@@ -1,0 +1,67 @@
+<section id="results" aria-live="polite">
+  {% if error %}
+  <p class="notice">{{ error }}</p>
+  {% elif not q %}
+  <div class="intro">
+    {% if ready %}
+    <p>Eight public-domain novels, split into passages. Try a name, a place, or a quoted phrase.</p>
+    <ul class="chips">
+      {% for query, label in suggestions %}
+      <li><a href="/?q={{ query | urlencode }}&amp;scorer={{ scorer }}&amp;k={{ k }}&amp;page=1">{{ label }}</a></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="notice">Set <code>INDEX_PATH</code> and start <code>findex serve</code>. Until the index loads, search has nothing to read.</p>
+    {% endif %}
+  </div>
+  {% elif total == 0 %}
+  <p class="notice">Nothing in the index matches <q>{{ q }}</q>.</p>
+  {% else %}
+  <div class="summary">
+    <p><strong>{{ "{:,}".format(total) }}</strong> {% if total == 1 %}passage{% else %}passages{% endif %}</p>
+    <p class="muted">{{ took_label }} ms · {{ scorer | upper }} · page {{ page }}{% if pages %} of {{ pages }}{% endif %}</p>
+  </div>
+  {% if past_end %}
+  <p class="notice">That page is past the end. <a href="{{ href(1) }}">Back to the first page</a>.</p>
+  {% endif %}
+  <ol class="hits" start="{{ (page - 1) * k + 1 }}">
+    {% for hit in hits %}
+    <li>
+      <article class="hit">
+        <div class="hit-main">
+          {% if hit.book %}<p class="kicker">{{ hit.book }}</p>{% endif %}
+          <h2><a href="/doc/{{ hit.doc_id }}?q={{ q | urlencode }}">{{ hit.title }}</a></h2>
+          <p class="snippet">{{ hit.snippet | mark_snippet }}</p>
+        </div>
+        <p class="score" title="score">{{ hit.score }}</p>
+      </article>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if window %}
+  <nav class="pages" aria-label="Pages">
+    {% if page > 1 %}
+    <a class="step" href="{{ href(page - 1) }}"
+       hx-get="{{ href(page - 1) }}" hx-target="#results" hx-select="#results"
+       hx-swap="outerHTML" hx-push-url="true">Previous</a>
+    {% endif %}
+    {% for number in window %}
+      {% if number is none %}
+      <span class="gap" aria-hidden="true">…</span>
+      {% elif number == page %}
+      <span class="current" aria-current="page">{{ number }}</span>
+      {% else %}
+      <a href="{{ href(number) }}"
+         hx-get="{{ href(number) }}" hx-target="#results" hx-select="#results"
+         hx-swap="outerHTML" hx-push-url="true">{{ number }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if page < pages %}
+    <a class="step" href="{{ href(page + 1) }}"
+       hx-get="{{ href(page + 1) }}" hx-target="#results" hx-select="#results"
+       hx-swap="outerHTML" hx-push-url="true">Next</a>
+    {% endif %}
+  </nav>
+  {% endif %}
+  {% endif %}
+</section>

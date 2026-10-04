@@ -6,11 +6,11 @@ import sys
 def main() -> None:
     if len(sys.argv) < 2:
         print("Використання: python -m findex <команда> [аргументи]")
-        print("Доступні команди: index, search, crawl")
+        print("Доступні команди: index, search, crawl, serve")
         sys.exit(1)
 
     cmd = sys.argv[1]
-    if cmd == "crawl":
+    if cmd in {"crawl", "serve"}:
         from findex.cli import app
 
         app()
