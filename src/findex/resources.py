@@ -288,12 +288,19 @@ def _filetime_seconds(value: _FILETIME) -> float:
     return ticks / 10_000_000
 
 
-# ctypes is imported lazily so non-Windows tests don't pay for WinDLL setup
-# at import, and so the names below exist for annotations on every platform.
+# ctypes itself is cross-platform. WinDLL is not: CPython defines it only when
+# os.name == "nt". Reading it at import time is what broke the Linux image
+# (``AttributeError: module 'ctypes' has no attribute 'WinDLL'``) while the
+# Dockerfile built the index. The Windows loaders below run only on win32.
 import ctypes as _ctypes  # noqa: E402
 from ctypes import wintypes as _wintypes  # noqa: E402
 
-_WinDll = _ctypes.WinDLL
+if sys.platform == "win32":
+    _WinDll = _ctypes.WinDLL
+else:
+    # CDLL exists on Linux and macOS. Nothing here loads a library; the name
+    # only keeps annotations valid where WinDLL is absent.
+    _WinDll = _ctypes.CDLL
 
 
 class _FILETIME(_ctypes.Structure):
@@ -338,6 +345,8 @@ _DLLS: tuple[_WinDll, _WinDll] | None = None
 
 def _win_dlls() -> tuple[_WinDll, _WinDll]:
     global _DLLS
+    if sys.platform != "win32":
+        raise OSError("WinDLL is only available on Windows")
     if _DLLS is not None:
         return _DLLS
     kernel32 = _ctypes.WinDLL("kernel32", use_last_error=True)
