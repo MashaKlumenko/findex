@@ -42,9 +42,10 @@ def test_threaded_search_overlaps_blocking_work(
         k: int,
         scorer: ScorerName,
         page: int,
+        **kwargs: object,
     ) -> SearchResponse:
         time.sleep(0.05)
-        return real(index, query, k=k, scorer=scorer, page=page)
+        return real(index, query, k=k, scorer=scorer, page=page, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(search_api, "run_search", slow)
 

@@ -16,10 +16,12 @@ def _write(tmp: Path, name: str, text: str) -> None:
 
 
 def test_rare_term_outranks_common_only(tmp_path: Path) -> None:
-    _write(tmp_path, "rare.txt", "xyzzy appears once here")
+    _write(tmp_path, "rare.txt", "xyzzy appears once here the")
     _write(tmp_path, "common.txt", "the the the the the filler words about nothing")
     index = build_index(iter_documents(tmp_path))
-    results = ranked_search(index, "xyzzy the", scorer=TfIdf(), k=2, snippets=False)
+    # ``the`` is in both files, so its IDF is zero. ``xyzzy`` is in one.
+    # OR keeps both documents in the list; the rare term has to win.
+    results = ranked_search(index, "xyzzy OR the", scorer=TfIdf(), k=2, snippets=False)
     assert results[0].title.startswith("xyzzy")
     assert results[0].score > results[1].score
 

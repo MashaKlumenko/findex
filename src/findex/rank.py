@@ -11,7 +11,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from operator import itemgetter
-from typing import Protocol, runtime_checkable, Literal
+from typing import Literal, Protocol, runtime_checkable
 
 from findex.index import Index, Posting
 from findex.query import match_doc_ids, parse
@@ -147,8 +147,29 @@ def _positive_terms(query: str) -> list[str]:
         return []
 
 
-@timed
-def ranked_search(
+def _pack_results(
+    index: Index,
+    ranked: Sequence[tuple[int, float]],
+    terms: Sequence[str],
+    *,
+    snippets: bool,
+) -> list[SearchResult]:
+    results: list[SearchResult] = []
+    for doc_id, score in ranked:
+        meta = index.doc_meta.get(doc_id)
+        title = meta.title if meta is not None else "?"
+        snippet = ""
+        if snippets:
+            snippet = make_snippet(index.document_text(doc_id), terms)
+        results.append(
+            SearchResult(
+                doc_id=doc_id, score=float(score), title=title, snippet=snippet
+            )
+        )
+    return results
+
+
+def ranked_search_python(
     index: Index,
     query: str,
     *,
@@ -156,7 +177,7 @@ def ranked_search(
     k: int = 10,
     snippets: bool = True,
 ) -> list[SearchResult]:
-    """Accumulate per-document scores, then ``heapq.nlargest`` for top-k."""
+    """Lab 3 scorer: one Python call per posting, then ``heapq.nlargest``."""
     if scorer is None:
         scorer = BM25()
     if not query.strip():
@@ -177,12 +198,31 @@ def ranked_search(
     else:
         scored_items = list(scores.items())
     top = heapq.nlargest(k, scored_items, key=itemgetter(1))
-    results: list[SearchResult] = []
-    for doc_id, score in top:
-        meta = index.doc_meta.get(doc_id)
-        title = meta.title if meta is not None else "?"
-        snippet = ""
-        if snippets:
-            snippet = make_snippet(index.document_text(doc_id), terms)
-        results.append(SearchResult(doc_id=doc_id, score=score, title=title, snippet=snippet))
-    return results
+    return _pack_results(index, top, terms, snippets=snippets)
+
+
+@timed
+def ranked_search(
+    index: Index,
+    query: str,
+    *,
+    scorer: Scorer | None = None,
+    k: int = 10,
+    snippets: bool = True,
+    engine: Literal["numpy", "python"] = "numpy",
+) -> list[SearchResult]:
+    """Rank ``query``. ``numpy`` is the vectorized scorer; ``python`` is Lab 3.
+
+    A scorer that is not BM25 or TF-IDF stays on the Python loop: the array
+    expressions only know those two formulas.
+    """
+    chosen = scorer if scorer is not None else BM25()
+    if engine == "python" or not isinstance(chosen, (BM25, TfIdf)):
+        return ranked_search_python(
+            index, query, scorer=scorer, k=k, snippets=snippets
+        )
+    from findex.numpy_rank import ranked_search_numpy
+
+    return ranked_search_numpy(
+        index, query, scorer=chosen, k=k, snippets=snippets
+    )

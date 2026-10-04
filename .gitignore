@@ -27,6 +27,10 @@ htmlcov/
 # Local binaries (oha) and scratch
 .tools/
 
+# Profiler dumps. Flame graphs in docs/*.svg stay.
+docs/*.prof
+docs/scalene-*.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

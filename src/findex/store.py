@@ -20,6 +20,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import numpy as np
+
 from findex.index import DocMeta, Index, PlainPosting, Posting
 from findex.timing import timed
 
@@ -93,9 +95,12 @@ def _posting_row(posting: Posting | PlainPosting) -> list:
 def _save_json(index: Index, path: Path) -> None:
     postings_json: dict[str, list] = {}
     for term, plist in index.postings.items():
-        if index.representation == "array":
+        if index.representation in {"array", "numpy"}:
             ids, tfs = plist
-            postings_json[term] = [list(ids), list(tfs)]
+            postings_json[term] = [
+                [int(x) for x in ids],
+                [int(x) for x in tfs],
+            ]
         else:
             postings_json[term] = [_posting_row(p) for p in plist]
 
@@ -132,6 +137,13 @@ def _load_json(path: Path) -> Index:
             postings[term] = (
                 array("I", (int(x) for x in ids_raw)),
                 array("I", (int(x) for x in tfs_raw)),
+            )
+            continue
+        if representation == "numpy":
+            ids_raw, tfs_raw = raw_data
+            postings[term] = (
+                np.asarray(ids_raw, dtype=np.int32),
+                np.asarray(tfs_raw, dtype=np.int32),
             )
             continue
             

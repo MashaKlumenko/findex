@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install pytest pytest-cov pyright ruff hypothesis
+          python -m pip install pytest pytest-cov pyright ruff hypothesis pytest-benchmark
 
       - name: Run Ruff (Linter)
         run: python -m ruff check . || true
@@ -32,3 +32,6 @@ jobs:
 
       - name: Run Tests
         run: python -m pytest -m "not slow" || true
+
+      - name: Benchmarks
+        run: python -m pytest tests/test_benchmark.py --benchmark-min-rounds=5 -q

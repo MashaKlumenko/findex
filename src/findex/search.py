@@ -181,6 +181,50 @@ def benchmark_engines(index: Index, *, repeat: int = 30) -> list[str]:
     return lines
 
 
+def _ranked(
+    index: Index,
+    query: str,
+    *,
+    scorer,
+    k: int,
+    snippets: bool,
+    mode: str,
+    index_path: Path,
+    embeddings_path: Path | None,
+):
+    if mode == "keyword":
+        return ranked_search(index, query, scorer=scorer, k=k, snippets=snippets)
+    from findex.semantic import Embeddings, hybrid_search, load_encoder, semantic_search
+
+    directory = embeddings_path
+    if directory is None:
+        candidate = index_path.resolve().parent / "embeddings"
+        if (candidate / "vectors.npy").is_file():
+            directory = candidate
+    if directory is None or not Path(directory).is_dir():
+        print(
+            "semantic and hybrid modes need embeddings. "
+            "Run `findex embed` or pass --embeddings.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    matrix = Embeddings.load(directory)
+    encode = load_encoder(matrix.model)
+    if mode == "semantic":
+        return semantic_search(
+            index, matrix, query, encode, k=k, snippets=snippets
+        )
+    return hybrid_search(
+        index,
+        matrix,
+        query,
+        encode,
+        scorer=scorer,
+        k=k,
+        snippets=snippets,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Boolean or ranked search over a saved index.")
     parser.add_argument(
@@ -210,6 +254,18 @@ def main(argv: list[str] | None = None) -> int:
         choices=("bm25", "tfidf"),
         default="bm25",
         help="ranking function (ignored with --boolean)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("keyword", "semantic", "hybrid"),
+        default="keyword",
+        help="keyword BM25/TF-IDF, chunk embeddings, or RRF of both",
+    )
+    parser.add_argument(
+        "--embeddings",
+        type=Path,
+        default=None,
+        help="directory from `findex embed` (vectors.npy)",
     )
     parser.add_argument(
         "--limit",
@@ -287,16 +343,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         scorer = get_scorer(args.scorer)
-        results = ranked_search(
+        results = _ranked(
             index,
             args.query,
             scorer=scorer,
             k=args.limit,
             snippets=not args.no_snippets,
+            mode=args.mode,
+            index_path=args.index,
+            embeddings_path=args.embeddings,
         )
         search_elapsed = time.perf_counter() - t1
         tracemalloc.stop()
         print(f"scorer:         {scorer!r}")
+        print(f"mode:           {args.mode}")
         print(f"query:          {args.query}")
         print(f"hits:           {len(results)}")
         print(f"search elapsed: {search_elapsed:.6f} s")

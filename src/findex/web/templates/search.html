@@ -8,7 +8,7 @@
         hx-swap="outerHTML"
         hx-push-url="true"
         hx-sync="this:replace"
-        hx-trigger="submit, change from:#scorer, change from:#k, keyup changed delay:300ms from:#q">
+        hx-trigger="submit, change from:#scorer, change from:#mode, change from:#k, keyup changed delay:300ms from:#q">
     <div class="query">
       <label for="q">Query</label>
       <div class="query-row">
@@ -20,6 +20,13 @@
       </div>
     </div>
     <div class="controls">
+      <label class="choice">Mode
+        <select id="mode" name="mode">
+          <option value="keyword" {% if mode == "keyword" %}selected{% endif %}>Keyword</option>
+          <option value="semantic" {% if mode == "semantic" %}selected{% endif %}>Semantic</option>
+          <option value="hybrid" {% if mode == "hybrid" %}selected{% endif %}>Hybrid</option>
+        </select>
+      </label>
       <label class="choice">Scorer
         <select id="scorer" name="scorer">
           <option value="bm25" {% if scorer == "bm25" %}selected{% endif %}>BM25</option>

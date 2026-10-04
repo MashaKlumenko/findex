@@ -71,6 +71,19 @@ def test_search_pagination(client: TestClient) -> None:
     assert second["total"] == 12
 
 
+def test_home_offers_hybrid(client: TestClient) -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "hybrid" in response.text
+    assert 'name="mode"' in response.text
+
+
+def test_semantic_without_embeddings_is_400(client: TestClient) -> None:
+    response = client.get("/search", params={"q": "alpha", "mode": "semantic"})
+    assert response.status_code == 400
+    assert "embeddings" in response.json()["detail"].lower()
+
+
 def test_tfidf_scorer(client: TestClient) -> None:
     response = client.get("/search", params={"q": "beta", "scorer": "tfidf"})
     assert response.status_code == 200

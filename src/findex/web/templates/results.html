@@ -7,7 +7,7 @@
     <p>Eight public-domain novels, split into passages. Try a name, a place, or a quoted phrase.</p>
     <ul class="chips">
       {% for query, label in suggestions %}
-      <li><a href="/?q={{ query | urlencode }}&amp;scorer={{ scorer }}&amp;k={{ k }}&amp;page=1">{{ label }}</a></li>
+      <li><a href="/?q={{ query | urlencode }}&amp;scorer={{ scorer }}&amp;mode={{ mode }}&amp;k={{ k }}&amp;page=1">{{ label }}</a></li>
       {% endfor %}
     </ul>
     {% else %}
@@ -19,7 +19,7 @@
   {% else %}
   <div class="summary">
     <p><strong>{{ "{:,}".format(total) }}</strong> {% if total == 1 %}passage{% else %}passages{% endif %}</p>
-    <p class="muted">{{ took_label }} ms · {{ scorer | upper }} · page {{ page }}{% if pages %} of {{ pages }}{% endif %}</p>
+    <p class="muted">{{ took_label }} ms · {{ mode }} · {{ scorer | upper }} · page {{ page }}{% if pages %} of {{ pages }}{% endif %}</p>
   </div>
   {% if past_end %}
   <p class="notice">That page is past the end. <a href="{{ href(1) }}">Back to the first page</a>.</p>

@@ -25,6 +25,8 @@ from itertools import islice
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
+
 from findex.corpus import (
     TEXT_SUFFIXES,
     Document,
@@ -153,12 +155,23 @@ class Index(Mapping):
     def doc_length(self, doc_id: int) -> int:
         return self.doc_lengths[doc_id]
 
+    @cached_property
+    def doc_len_array(self) -> np.ndarray:
+        """One ``int32`` length per document id. Index ``i`` is document ``i``."""
+        if not self.doc_meta:
+            return np.zeros(0, dtype=np.int32)
+        size = max(self.doc_meta) + 1
+        out = np.zeros(size, dtype=np.int32)
+        for doc_id, length in self.doc_lengths.items():
+            out[doc_id] = length
+        return out
+
     def df(self, term: str) -> int:
         """Document frequency of ``term`` (0 if unknown)."""
         plist = self.postings.get(term)
         if not plist:
             return 0
-        if self.representation == "array":
+        if _is_buffer(self.representation):
             return len(plist[0])
         return len(plist)
 
@@ -167,13 +180,34 @@ class Index(Mapping):
 
     def doc_ids_for(self, term: str) -> list[int]:
         """Sorted document ids that contain ``term`` (empty if unknown)."""
-        return [p.doc_id for p in self.iter_postings(term)]
+        pair = self.posting_arrays(term)
+        if pair is None:
+            return []
+        return [int(doc_id) for doc_id in pair[0]]
+
+    def posting_arrays(self, term: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """``int32`` doc ids and ``int32`` term frequencies for ``term``.
+
+        ``array('I')`` postings are a ``np.frombuffer`` view (no copy) when
+        every value fits in ``int32``. Object postings are copied once and
+        cached. ``representation="numpy"`` already stores the arrays.
+        """
+        cache: dict[str, tuple[np.ndarray, np.ndarray]] = self.__dict__.setdefault(
+            "_posting_arrays", {}
+        )
+        cached = cache.get(term)
+        if cached is not None:
+            return cached
+        built = _posting_arrays(self, term)
+        if built is not None:
+            cache[term] = built
+        return built
 
     def iter_postings(self, term: str) -> Iterator[Posting]:
         plist = self.postings.get(term)
         if not plist:
             return
-        if self.representation == "array":
+        if _is_buffer(self.representation):
             ids, tfs = plist
             for doc_id, tf in zip(ids, tfs, strict=False):
                 yield Posting(int(doc_id), int(tf), ())
@@ -210,6 +244,8 @@ class Index(Mapping):
         self.postings.clear()
         self.doc_lengths.clear()
         self.doc_meta.clear()
+        self.__dict__.pop("_posting_arrays", None)
+        self.__dict__.pop("doc_len_array", None)
         self.__dict__.pop("avg_doc_length", None)
         self._closed = True
 
@@ -322,9 +358,50 @@ class _IndexJob:
     max_docs: int | None = None
 
 
+def _is_buffer(representation: str) -> bool:
+    """Postings stored as a pair of buffers, not a list of objects."""
+    return representation in {"array", "numpy"}
+
+
 def _check_representation(representation: str) -> None:
-    if representation not in {"slots", "plain", "array"}:
+    if representation not in {"slots", "plain", "array", "numpy"}:
         raise ValueError(f"unknown representation: {representation!r}")
+
+
+def _array_i_as_int32(buf: array) -> np.ndarray:
+    """View an ``array('I')`` as ``int32`` without copying when it is safe."""
+    if buf.itemsize != 4:
+        return np.array(buf, dtype=np.int32)
+    view = np.frombuffer(buf, dtype=np.uint32)
+    if view.size and int(view.max()) >= 2**31:
+        return view.astype(np.int32)
+    return view.view(np.int32)
+
+
+def _as_owned_int32(values: np.ndarray | array) -> np.ndarray:
+    if isinstance(values, np.ndarray):
+        if values.dtype == np.int32 and values.flags.c_contiguous:
+            return values
+        return np.ascontiguousarray(values, dtype=np.int32)
+    return _array_i_as_int32(values)
+
+
+def _posting_arrays(
+    index: Index, term: str
+) -> tuple[np.ndarray, np.ndarray] | None:
+    plist = index.postings.get(term)
+    if not plist:
+        return None
+    if _is_buffer(index.representation):
+        ids, tfs = plist
+        return _as_owned_int32(ids), _as_owned_int32(tfs)
+    count = len(plist)
+    doc_ids = np.empty(count, dtype=np.int32)
+    tfs = np.empty(count, dtype=np.int32)
+    for i, posting in enumerate(plist):
+        doc_ids[i] = posting.doc_id
+        tfs[i] = posting.tf
+    return doc_ids, tfs
 
 
 def _accumulate_document(
@@ -346,7 +423,7 @@ def _accumulate_document(
         stored_path = f"{stored_path}#{doc.source_line}"
     doc_meta[doc_id] = DocMeta(path=stored_path, title=_title_from_document(doc))
     for term, (tf, pos) in stats.items():
-        if representation == "array":
+        if _is_buffer(representation):
             array_ids[term].append(doc_id)
             array_tfs[term].append(tf)
         elif representation == "plain":
@@ -401,7 +478,7 @@ def _freeze_partial(
     positions: bool,
     representation: str,
 ) -> PartialIndex:
-    if representation == "array":
+    if _is_buffer(representation):
         postings: dict[str, Any] = {
             term: (array_ids[term], array_tfs[term]) for term in array_ids
         }
@@ -490,7 +567,7 @@ def merge(partials: Iterable[PartialIndex]) -> Index:
         doc_lengths.update(item.doc_lengths)
         doc_meta.update(item.doc_meta)
 
-    if representation == "array":
+    if _is_buffer(representation):
         postings: dict[str, Any] = {}
         for item in items:
             for term, pair in item.postings.items():
@@ -501,6 +578,14 @@ def merge(partials: Iterable[PartialIndex]) -> Index:
                 else:
                     slot[0].extend(ids)
                     slot[1].extend(tfs)
+        if representation == "numpy":
+            postings = {
+                term: (
+                    np.array(ids, dtype=np.int32),
+                    np.array(tfs, dtype=np.int32),
+                )
+                for term, (ids, tfs) in postings.items()
+            }
     else:
         grouped: dict[str, list[list[Any]]] = defaultdict(list)
         for item in items:
@@ -755,7 +840,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--representation",
-        choices=("slots", "plain", "array"),
+        choices=("slots", "plain", "array", "numpy"),
         default="slots",
         help="postings storage used for the Lab 2 memory table",
     )

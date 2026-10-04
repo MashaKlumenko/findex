@@ -21,7 +21,7 @@ from rich.table import Table
 
 from findex.crawler.run import render_stats, run_crawl
 from findex.index import DEFAULT_EXECUTOR, EXECUTORS, build_index_parallel
-from findex.rank import get_scorer, ranked_search
+from findex.rank import get_scorer
 from findex.search import boolean_search
 from findex.stats import format_bytes
 from findex.store import open_index, save
@@ -137,6 +137,12 @@ def search_command(
     engine: Literal["merge", "set"] = typer.Option("merge", "--engine", help="Boolean engine type."),
     scorer_type: Literal["bm25", "tfidf"] = typer.Option("bm25", "--scorer", help="Ranked scorer function."),
     limit: int = typer.Option(10, "--limit", "-l", help="Maximum hits to return."),
+    mode: Literal["keyword", "semantic", "hybrid"] = typer.Option(
+        "keyword", "--mode", help="keyword, semantic, or hybrid (RRF)."
+    ),
+    embeddings: Path | None = typer.Option(
+        None, "--embeddings", help="Directory written by `findex embed`."
+    ),
     json_mode: bool = typer.Option(False, "--json", help="Output raw JSON data directly to stdout."),
 ) -> None:
     """Query the index and display matching documents."""
@@ -162,7 +168,18 @@ def search_command(
                 console.print(table)
             else:
                 scorer = get_scorer(scorer_type)
-                results = ranked_search(index, query, scorer=scorer, k=limit)
+                from findex.search import _ranked
+
+                results = _ranked(
+                    index,
+                    query,
+                    scorer=scorer,
+                    k=limit,
+                    snippets=True,
+                    mode=mode,
+                    index_path=index_path,
+                    embeddings_path=embeddings,
+                )
                 results_json = [
                     {"doc_id": r.doc_id, "score": r.score, "title": r.title, "snippet": r.snippet}
                     for r in results
@@ -289,6 +306,11 @@ def serve_command(
         "-i",
         help="Index file. Exported as INDEX_PATH before workers start.",
     ),
+    embeddings: Path | None = typer.Option(
+        None,
+        "--embeddings",
+        help="Chunk matrix from `findex embed`. Exported as EMBEDDINGS_PATH.",
+    ),
 ) -> None:
     """Serve the search API and web page.
 
@@ -297,6 +319,8 @@ def serve_command(
     """
     if index is not None:
         os.environ["INDEX_PATH"] = str(index.resolve())
+    if embeddings is not None:
+        os.environ["EMBEDDINGS_PATH"] = str(embeddings.resolve())
     import uvicorn
 
     uvicorn.run(
@@ -306,6 +330,44 @@ def serve_command(
         workers=workers,
         proxy_headers=True,
         forwarded_allow_ips="*",
+    )
+
+
+@app.command(name="embed")
+def embed_command(
+    index_path: Path = typer.Argument(..., help="Saved index to chunk."),
+    out: Path = typer.Option(
+        Path("data/embeddings"), "--out", "-o", help="Directory for vectors.npy."
+    ),
+    model: str = typer.Option(
+        "all-MiniLM-L6-v2", "--model", help="Sentence-transformers model name."
+    ),
+    chunk_size: int = typer.Option(256, "--chunk-size", help="Tokens per chunk."),
+    overlap: int = typer.Option(32, "--overlap", help="Token overlap between chunks."),
+) -> None:
+    """Embed document chunks and save a normalized matrix."""
+    from findex.semantic import embed_index, load_encoder
+
+    if not index_path.exists():
+        error_console.print(f"Error: Index file not found at '{index_path}'")
+        raise typer.Exit(code=1)
+    try:
+        encode = load_encoder(model, progress=True)
+        with open_index(index_path) as index:
+            matrix = embed_index(
+                index,
+                encode,
+                model=model,
+                chunk_size=chunk_size,
+                overlap=overlap,
+            )
+        matrix.save(out)
+    except Exception:
+        error_console.print(traceback.format_exc())
+        raise typer.Exit(code=1) from None
+    console.print(
+        f"Wrote {matrix.vectors.shape[0]} chunks "
+        f"of dim {matrix.vectors.shape[1]} to {out}"
     )
 
 

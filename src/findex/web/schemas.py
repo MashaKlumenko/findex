@@ -17,6 +17,7 @@ class SearchRequest(BaseModel):
     q: str = Field(min_length=1, max_length=200, description="Ranked query")
     k: int = Field(default=10, ge=1, le=100, description="Page size")
     scorer: Literal["bm25", "tfidf"] = "bm25"
+    mode: Literal["keyword", "semantic", "hybrid"] = "keyword"
     page: int = Field(default=1, ge=1, le=1000)
 
 
@@ -35,6 +36,7 @@ class SearchResponse(BaseModel):
     page: int
     k: int
     took_ms: float
+    mode: Literal["keyword", "semantic", "hybrid"] = "keyword"
     results: list[SearchResult]
 
 

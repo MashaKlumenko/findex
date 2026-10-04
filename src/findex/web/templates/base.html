@@ -25,7 +25,7 @@
     {% block body %}{% endblock %}
   </main>
   <footer class="colophon">
-    <p>Public-domain passages. Ranked with BM25 or TF-IDF. The index stays in memory.</p>
+    <p>Public-domain passages. Keyword (BM25), semantic, or both fused with RRF. findex {{ app_version }}.</p>
   </footer>
   <script>
     document.addEventListener("keydown", function (event) {

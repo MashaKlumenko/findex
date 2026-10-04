@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from findex.index import DocMeta, Index
 from findex.query import QuerySyntaxError
+from findex.semantic import Embeddings, EmbeddingsUnavailable, Encode, load_encoder
 from findex.store import load
 from findex.web import search_api
 from findex.web.deps import get_index, get_settings, require_index
@@ -42,7 +43,7 @@ from findex.web.schemas import (
 )
 from findex.web.settings import Settings, load_settings
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "1.0.0"
 WEB_ROOT = Path(__file__).resolve().parent
 TEMPLATE_DIR = WEB_ROOT / "templates"
 STATIC_DIR = WEB_ROOT / "static"
@@ -61,6 +62,7 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 # Jinja's filter map is typed as the built-in filters only.
 templates.env.filters["mark_snippet"] = highlight_snippet  # type: ignore[assignment]
 templates.env.filters["mark_text"] = highlight_text  # type: ignore[assignment]
+templates.env.globals["app_version"] = APP_VERSION  # type: ignore[index]
 
 
 class RequestIdMiddleware:
@@ -142,6 +144,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 index.num_docs,
                 len(index),
             )
+        emb_path = resolved.embeddings_path
+        if emb_path is not None:
+            try:
+                app.state.embeddings = Embeddings.load(emb_path)
+                logger.info(
+                    "embeddings ready path=%s model=%s",
+                    emb_path,
+                    app.state.embeddings.model,
+                )
+            except Exception:
+                logger.exception("embeddings not loaded path=%s", emb_path)
         try:
             yield
         finally:
@@ -158,6 +171,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.state.settings = resolved
     application.state.index = None
+    application.state.embeddings = None
+    application.state.encode = None
     application.state.started_at = time.monotonic()
 
     application.add_middleware(
@@ -210,8 +225,9 @@ def _register_search(application: FastAPI, *, blocking_async: bool) -> None:
         async def search_blocking(
             params: Annotated[SearchRequest, Query()],
             index: Annotated[Index, Depends(require_index)],
+            request: Request,
         ) -> SearchResponse:
-            return _perform_search(params, index)
+            return _perform_search(params, index, request)
 
     else:
 
@@ -219,11 +235,14 @@ def _register_search(application: FastAPI, *, blocking_async: bool) -> None:
         def search(
             params: Annotated[SearchRequest, Query()],
             index: Annotated[Index, Depends(require_index)],
+            request: Request,
         ) -> SearchResponse:
-            return _perform_search(params, index)
+            return _perform_search(params, index, request)
 
 
-def _perform_search(params: SearchRequest, index: Index) -> SearchResponse:
+def _perform_search(
+    params: SearchRequest, index: Index, request: Request
+) -> SearchResponse:
     try:
         return search_api.run_search(
             index,
@@ -231,9 +250,27 @@ def _perform_search(params: SearchRequest, index: Index) -> SearchResponse:
             k=params.k,
             scorer=params.scorer,
             page=params.page,
+            mode=params.mode,
+            embeddings=getattr(request.app.state, "embeddings", None),
+            encode=_encoder(request) if params.mode != "keyword" else None,
         )
     except QuerySyntaxError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EmbeddingsUnavailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _encoder(request: Request) -> Encode | None:
+    """Load the embedding model on the first semantic request and keep it."""
+    cached = getattr(request.app.state, "encode", None)
+    if cached is not None:
+        return cached
+    embeddings = getattr(request.app.state, "embeddings", None)
+    if not isinstance(embeddings, Embeddings):
+        return None
+    encode = load_encoder(embeddings.model)
+    request.app.state.encode = encode
+    return encode
 
 
 def _register_api(application: FastAPI) -> None:
@@ -293,6 +330,7 @@ def _register_pages(application: FastAPI) -> None:
         q: Annotated[str, Query(max_length=200)] = "",
         k: Annotated[int, Query(ge=1, le=100)] = 10,
         scorer: Literal["bm25", "tfidf"] = "bm25",
+        mode: Literal["keyword", "semantic", "hybrid"] = "keyword",
         page: Annotated[int, Query(ge=1, le=1000)] = 1,
     ) -> HTMLResponse:
         return _render_search(
@@ -300,6 +338,7 @@ def _register_pages(application: FastAPI) -> None:
             q=q,
             k=k,
             scorer=scorer,
+            mode=mode,
             page=page,
             index=index,
         )
@@ -344,7 +383,11 @@ def _register_pages(application: FastAPI) -> None:
                 "book": book,
                 "body": text,
                 "words": len(text.split()),
-                "back": _search_href(q, k=10, scorer="bm25", page=1) if q else "/",
+                "back": (
+                    _search_href(q, k=10, scorer="bm25", mode="keyword", page=1)
+                    if q
+                    else "/"
+                ),
             },
         )
 
@@ -355,6 +398,7 @@ def _render_search(
     q: str,
     k: int,
     scorer: Literal["bm25", "tfidf"],
+    mode: Literal["keyword", "semantic", "hybrid"],
     page: int,
     index: Index | None,
 ) -> HTMLResponse:
@@ -371,9 +415,19 @@ def _render_search(
     elif query and index is not None:
         try:
             result = search_api.run_search(
-                index, query, k=k, scorer=scorer, page=page
+                index,
+                query,
+                k=k,
+                scorer=scorer,
+                page=page,
+                mode=mode,
+                embeddings=getattr(request.app.state, "embeddings", None),
+                encode=_encoder(request) if mode != "keyword" else None,
             )
         except QuerySyntaxError as exc:
+            status = 400
+            error = str(exc)
+        except EmbeddingsUnavailable as exc:
             status = 400
             error = str(exc)
         else:
@@ -384,12 +438,13 @@ def _render_search(
     pages = math.ceil(total / k) if total else 0
 
     def _href(target: int) -> str:
-        return _search_href(query, k=k, scorer=scorer, page=target)
+        return _search_href(query, k=k, scorer=scorer, mode=mode, page=target)
 
     context: dict[str, object] = {
         "q": query,
         "k": k,
         "scorer": scorer,
+        "mode": mode,
         "page": page,
         "pages": pages,
         "window": _page_window(page, pages),
@@ -469,8 +524,10 @@ def _format_ms(took_ms: float) -> str:
     return f"{took_ms:.0f}"
 
 
-def _search_href(q: str, *, k: int, scorer: str, page: int) -> str:
-    return "/?" + urlencode({"q": q, "k": k, "scorer": scorer, "page": page})
+def _search_href(q: str, *, k: int, scorer: str, mode: str, page: int) -> str:
+    return "/?" + urlencode(
+        {"q": q, "k": k, "scorer": scorer, "mode": mode, "page": page}
+    )
 
 
 def _page_window(page: int, pages: int) -> list[int | None]:

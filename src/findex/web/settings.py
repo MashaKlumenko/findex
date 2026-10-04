@@ -29,12 +29,13 @@ class Settings(BaseSettings):
     )
 
     index_path: Path | None = None
+    embeddings_path: Path | None = None
     log_level: str = "INFO"
     host: str = "0.0.0.0"
     port: int = 8000
     findex_search_async: bool = Field(default=False)
 
-    @field_validator("index_path", mode="before")
+    @field_validator("index_path", "embeddings_path", mode="before")
     @classmethod
     def empty_path_is_unset(cls, value: object) -> object:
         if value is None:
