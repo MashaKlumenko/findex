@@ -1,6 +1,9 @@
+import multiprocessing
 import sys
+
 import findex.index
 import findex.search
+
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -21,4 +24,5 @@ def main() -> None:
         sys.exit(1)
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

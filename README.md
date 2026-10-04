@@ -256,10 +256,12 @@ pip install dist/findex-0.4.0-py3-none-any.whl
 The system provides three main subcommands through its modern `typer` interface:
 
 ### 1. Build an Index
-Analyze a document corpus directory and build the inverted index with a beautiful progress bar:
 ```bash
-findex index data/corpus/ --out index.json
+findex index data/ --out index.json
+findex index data/ --out index.json --workers 8 --executor threads
 ```
+
+`--executor` is `serial` (default), `threads`, or `processes`. `--workers` is the number of chunks. Serial is the default on this machine: see Lab 5.
 
 ### 2. Full-Text Search (Ranked & Boolean)
 Query your saved index using state-of-the-art ranking metrics (**BM25** or **TF-IDF**):
@@ -312,4 +314,65 @@ uv run pytest -m "not slow"
 
 # Generate an interactive terminal code coverage report
 uv run pytest --cov=src/findex --cov-report=term-missing
+```
+
+## Лабораторна робота 5. Конкурентність і GIL
+
+Індекс з лаби 4 збирається тими самими `build_partial` і `merge`. Воркер отримує шляхи до файлів і сам їх читає. `doc_id` видаються наперед, окремим діапазоном на кожен шматок, тож списки постінгів не перетинаються. `findex index --workers N --executor {serial,threads,processes}` ганяє один і той самий код у циклі, у `ThreadPoolExecutor` або в `ProcessPoolExecutor` зі стартом `spawn`. Якщо воркер падає, збірка падає і друкує його стек.
+
+Пояснення своїми словами: [docs/lab05-gil.md](docs/lab05-gil.md).
+
+### Машина і методика
+
+- CPU: **13th Gen Intel Core i7-13650HX**, 14 ядер, **20** логічних процесорів (`os.cpu_count() == 20`)
+- Python **3.13.16**, `sys._is_gil_enabled() == True`
+- Вільна від GIL збірка: **3.13.16 free-threading**, `sys._is_gil_enabled() == False`
+- Корпус: 5048 документів Gutenberg під `data/`
+- Кожна клітинка — медіана **трьох** запусків в окремому процесі (щоб пік RSS не накопичувався). Перед сіткою один прогін serial викинуто як прогрів дискового кешу
+- Wall — `time.perf_counter` навколо `build_partial` + `merge`. CPU — сума user+kernel батька і живих дочірніх процесів. RSS — пік working set **батьківського** процесу. Merge заміряний окремо
+
+Сирі прогони: `docs/lab05-bench.json`, `docs/lab05-bench-313t.json`.
+
+### Таблиця
+
+Прискорення рахується від serial на збірці з GIL (1.477 с).
+
+| Executor | Workers | Wall (с, медіана) | CPU (с) | Peak RSS | Merge (с) | Speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| serial | 1 | 1.477 | 1.453 | 72.4 MiB | 0.240 | 1.00× |
+| threads, GIL on | 1 | 1.499 | 1.422 | 72.4 MiB | 0.253 | 0.99× |
+| threads, GIL on | 2 | 1.333 | 1.578 | 74.0 MiB | 0.276 | 1.11× |
+| threads, GIL on | 4 | 1.539 | 2.062 | 75.4 MiB | 0.290 | 0.96× |
+| threads, GIL on | 8 | 1.677 | 2.312 | 77.9 MiB | 0.313 | 0.88× |
+| threads, GIL on | 20 | 1.795 | 2.469 | 82.0 MiB | 0.205 | 0.82× |
+| processes | 1 | 3.332 | 3.219 | 134.5 MiB | 0.066 | 0.44× |
+| processes | 2 | 1.845 | 2.875 | 109.5 MiB | 0.088 | 0.80× |
+| processes | 4 | 1.526 | 3.297 | 98.4 MiB | 0.112 | 0.97× |
+| processes | 8 | 1.734 | 5.203 | 92.9 MiB | 0.184 | 0.85× |
+| processes | 20 | 1.654 | 10.312 | 94.7 MiB | 0.181 | 0.89× |
+| threads, 3.13t, GIL off | 1 | 2.331 | 2.266 | 79.9 MiB | 0.144 | 0.63× |
+| threads, 3.13t, GIL off | 2 | 0.999 | 1.594 | 81.5 MiB | 0.211 | 1.48× |
+| threads, 3.13t, GIL off | 4 | 0.780 | 1.750 | 86.4 MiB | 0.227 | 1.89× |
+| threads, 3.13t, GIL off | 8 | 0.723 | 2.922 | 94.3 MiB | 0.259 | 2.04× |
+| threads, 3.13t, GIL off | 20 | 2.859 | 8.891 | 111.5 MiB | 0.444 | 0.52× |
+
+![Прискорення від числа воркерів](docs/lab05-speedup.png)
+
+Пунктир — ідеальний лінійний ріст (`speedup = workers`). Вісь обрізана на 4.2×, інакше пряма до 20× розчавлює виміряні криві. Вона виходить за верх кадру вже біля чотирьох воркерів.
+
+Найкращий wall у процесів — 1.526 с проти 1.477 с у serial, і розкиди цих прогонів перетинаються. Типовий `--executor` лишається `serial`. Потоки без GIL на 8 воркерах стабільно швидші: 0.723 с, усі три прогони нижче за найкращий serial (1.322 с).
+
+Повторити:
+
+```bash
+uv python install 3.13 3.13t
+uv sync --python 3.13
+uv venv --python 3.13t .venv-nogil
+uv pip install --python .venv-nogil/Scripts/python.exe typer rich
+.venv\Scripts\python.exe scripts/lab05_bench.py --root data --out docs/lab05-bench.json
+.venv-nogil\Scripts\python.exe scripts/lab05_bench.py --root data --out docs/lab05-bench-313t.json --executor threads
+.venv\Scripts\python.exe scripts/lab05_plot.py docs/lab05-bench.json docs/lab05-bench-313t.json
+.venv\Scripts\python.exe scripts/lab05_race.py
+.venv-nogil\Scripts\python.exe scripts/lab05_race.py
+.venv\Scripts\python.exe scripts/lab05_io.py --root data
 ```

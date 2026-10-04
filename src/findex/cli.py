@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import json
 import logging
+import multiprocessing
 import sys
-import time
+import traceback
 from pathlib import Path
+
 # pyright: reportUnusedImport=false, reportUnknownVariableType=false
-from typing import Optional, Literal
+from typing import Literal
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from findex.store import open_index
+from findex.index import DEFAULT_EXECUTOR, EXECUTORS, build_index_parallel
 from findex.rank import get_scorer, ranked_search
-from findex.search import boolean_search, benchmark_engines
+from findex.search import boolean_search
+from findex.stats import format_bytes
+from findex.store import open_index, save
 
 # Створюємо аплікацію Typer
 app = typer.Typer(help="findex: CLI search engine tool.")
@@ -61,21 +65,61 @@ def main_callback(
 @app.command(name="index")
 def index_command(
     corpus: Path = typer.Argument(..., help="Path to the document corpus dir/file."),
-    output: Path = typer.Option(Path("index.json"), "--out", "-o", help="Output index path."),
+    output: Path = typer.Option(
+        Path("index.json"), "--out", "-o", help="Output index path."
+    ),
+    workers: int | None = typer.Option(
+        None,
+        "--workers",
+        "-j",
+        help="Number of chunks. Default: 1 for serial, os.cpu_count() otherwise.",
+    ),
+    executor: Literal["serial", "threads", "processes"] = typer.Option(
+        DEFAULT_EXECUTOR,
+        "--executor",
+        help="serial loop, ThreadPoolExecutor, or ProcessPoolExecutor.",
+    ),
+    positions: bool = typer.Option(False, "--positions", help="Store token offsets."),
+    limit: int | None = typer.Option(
+        None, "--limit", help="Index only the first N documents."
+    ),
 ) -> None:
     """Build an inverted index from a document corpus."""
-    logger.info("Starting index construction for: %s", corpus)
-    try:
-        from rich.progress import track
-        # Тут викликається реальний імпорт твого білдера з лаб 1-3
-        # Імітація прогрес-бару для rich за вимогою лаби
-        for _ in track(range(100), description="Processing corpus..."):
-            time.sleep(0.01)
-
-        console.print(f"[green]Successfully indexed corpus and saved to {output}[/green]")
-    except Exception as e:
-        error_console.print(f"Error building index: {e}")
+    if executor not in EXECUTORS:
+        error_console.print(f"Error: unknown executor {executor!r}")
         raise typer.Exit(code=1)
+    logger.info("Starting index construction for: %s (%s)", corpus, executor)
+    try:
+        index, report = build_index_parallel(
+            corpus,
+            positions=positions,
+            limit=limit,
+            workers=workers,
+            executor=executor,
+        )
+        save(index, output)
+    except Exception:
+        # The worker stack is on ``__cause__`` for process pools. Print it;
+        # do not swallow the failure into a hang or a one-line message.
+        error_console.print(traceback.format_exc())
+        raise typer.Exit(code=1)
+
+    gil = report.gil_enabled
+    gil_text = "n/a" if gil is None else str(gil)
+    table = Table(title="Index build")
+    table.add_column("Metric", style="bold yellow")
+    table.add_column("Value", style="light_blue")
+    table.add_row("Documents", str(index.num_docs))
+    table.add_row("Vocabulary", str(len(index)))
+    table.add_row("Executor", report.executor)
+    table.add_row("Workers", str(report.workers))
+    table.add_row("Wall", f"{report.wall_seconds:.3f} s")
+    table.add_row("CPU", f"{report.cpu_seconds:.3f} s")
+    table.add_row("Peak RSS (parent)", format_bytes(report.peak_rss))
+    table.add_row("Merge", f"{report.merge_seconds:.3f} s")
+    table.add_row("sys._is_gil_enabled()", gil_text)
+    table.add_row("Wrote", str(output))
+    console.print(table)
 
 
 @app.command(name="search")
@@ -162,4 +206,5 @@ def stats_command(
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     app()

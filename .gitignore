@@ -3,6 +3,7 @@ data/
 
 # Python
 .venv/
+.venv-nogil/
 venv/
 __pycache__/
 *.py[cod]

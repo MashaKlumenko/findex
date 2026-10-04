@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,3 +120,43 @@ def _doc_id(path: Path, id_base: Path) -> str:
         return path.relative_to(id_base).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def list_corpus_paths(root: Path) -> list[Path]:
+    """Files ``iter_documents`` would open, in the same order.
+
+    Workers receive these paths and read the bytes themselves. A ``.txt`` /
+    ``.md`` file is one document; a ``.jsonl`` file may be many.
+    """
+    root = Path(root)
+    if root.is_file():
+        return [root]
+    if not root.is_dir():
+        raise FileNotFoundError(f"corpus root does not exist: {root}")
+    return sorted(
+        p
+        for p in root.rglob("*")
+        if p.is_file() and p.suffix.lower() in TEXT_SUFFIXES.union({".jsonl"})
+    )
+
+
+def iter_paths(paths: Iterable[Path]) -> Iterator[Document]:
+    """Yield documents from already-chosen files, in list order."""
+    for path in paths:
+        path = Path(path)
+        yield from _iter_file(path, id_base=path.parent)
+
+
+def count_documents(path: Path) -> int:
+    """How many documents ``path`` contributes, without keeping the text.
+
+    ``.txt`` / ``.md`` are one document. ``.jsonl`` is counted by walking
+    lines the same way ``iter_documents`` does, so bad lines are skipped.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix in TEXT_SUFFIXES:
+        return 1
+    if suffix == ".jsonl":
+        return sum(1 for _ in _iter_file(path, id_base=path.parent))
+    return 0
