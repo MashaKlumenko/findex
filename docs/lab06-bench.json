@@ -1,0 +1,67 @@
+{
+  "machine": "Windows-11-10.0.26300-SP0",
+  "python": "3.13.16",
+  "seed_path": "/page/0",
+  "latency_seconds": 0.08,
+  "max_pages": 200,
+  "note": "per_host equals concurrency and delay is 0 so the table measures in-flight requests. The host-limit row keeps per_host=2.",
+  "rows": [
+    {
+      "concurrency": 1,
+      "per_host": 1,
+      "delay": 0,
+      "pages": 200,
+      "errors": 0,
+      "wall_seconds": 17.61,
+      "pages_per_sec": 11.36,
+      "peak_rss": 45879296,
+      "peak_rss_human": "43.8 MiB"
+    },
+    {
+      "concurrency": 5,
+      "per_host": 5,
+      "delay": 0,
+      "pages": 200,
+      "errors": 0,
+      "wall_seconds": 3.8,
+      "pages_per_sec": 52.63,
+      "peak_rss": 47181824,
+      "peak_rss_human": "45.0 MiB"
+    },
+    {
+      "concurrency": 20,
+      "per_host": 20,
+      "delay": 0,
+      "pages": 200,
+      "errors": 0,
+      "wall_seconds": 1.223,
+      "pages_per_sec": 163.54,
+      "peak_rss": 48934912,
+      "peak_rss_human": "46.7 MiB"
+    }
+  ],
+  "host_limit": {
+    "concurrency": 20,
+    "per_host": 2,
+    "delay": 0.05,
+    "pages": 200,
+    "errors": 0,
+    "wall_seconds": 12.534,
+    "pages_per_sec": 15.96,
+    "peak_rss": 49041408,
+    "peak_rss_human": "46.8 MiB"
+  },
+  "failure": {
+    "concurrency": 1,
+    "per_host": 1,
+    "delay": 0,
+    "pages": 1,
+    "errors": 0,
+    "wall_seconds": 1.45,
+    "pages_per_sec": 0.69,
+    "peak_rss": 48680960,
+    "peak_rss_human": "46.4 MiB"
+  },
+  "failure_log": "ts=2026-10-04T13:15:07.699Z url=http://127.0.0.1:55920/robots.txt status=200 bytes=42 elapsed=0.072 attempt=1 error=-\nts=2026-10-04T13:15:07.755Z url=http://127.0.0.1:55920/flaky status=429 bytes=9 elapsed=0.055 attempt=1 error=http_429 retry_after=1.000\nts=2026-10-04T13:15:09.073Z url=http://127.0.0.1:55920/flaky status=200 bytes=82 elapsed=0.058 attempt=2 error=-\n",
+  "debug_clean": true
+}

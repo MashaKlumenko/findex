@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import multiprocessing
 import os
@@ -189,6 +190,10 @@ class Index(Mapping):
         meta = self.doc_meta.get(doc_id)
         if meta is None:
             return ""
+        file_path, line_no = _jsonl_line(meta.path)
+        if line_no is not None:
+            text = _read_jsonl_line(file_path, line_no)
+            return text or meta.title
         path = Path(meta.path)
         try:
             return path.read_text(encoding="utf-8", errors="replace")
@@ -214,6 +219,40 @@ class Index(Mapping):
     def __exit__(self, exc_type, exc, tb) -> bool:
         self.close()
         return False
+
+
+def _jsonl_line(path: str) -> tuple[str, int | None]:
+    """``file.jsonl#12`` points at one document. Anything else is a whole file."""
+    file, sep, tail = path.rpartition("#")
+    if not sep or not file.lower().endswith(".jsonl"):
+        return path, None
+    try:
+        line_no = int(tail)
+    except ValueError:
+        return path, None
+    if line_no < 1:
+        return path, None
+    return file, line_no
+
+
+def _read_jsonl_line(path: str, line_no: int) -> str:
+    try:
+        with Path(path).open(encoding="utf-8", errors="replace") as handle:
+            for number, line in enumerate(handle, start=1):
+                if number != line_no:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    for key in ("text", "body", "content"):
+                        value = obj.get(key)
+                        if isinstance(value, str):
+                            return value
+                if isinstance(obj, str):
+                    return obj
+                return line.strip()
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return ""
 
 
 def _title_from_document(doc: Document) -> str:
@@ -302,7 +341,10 @@ def _accumulate_document(
 ) -> None:
     n_tokens, stats = _term_stats(doc.text, positions=positions)
     doc_lengths[doc_id] = n_tokens
-    doc_meta[doc_id] = DocMeta(path=str(doc.path), title=_title_from_document(doc))
+    stored_path = str(doc.path)
+    if doc.source_line is not None:
+        stored_path = f"{stored_path}#{doc.source_line}"
+    doc_meta[doc_id] = DocMeta(path=stored_path, title=_title_from_document(doc))
     for term, (tf, pos) in stats.items():
         if representation == "array":
             array_ids[term].append(doc_id)

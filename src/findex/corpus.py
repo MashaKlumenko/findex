@@ -29,6 +29,8 @@ class Document:
     doc_id: str
     path: Path
     text: str
+    # 1-based line in a JSONL file. Snippets re-read that line, not the whole file.
+    source_line: int | None = None
 
 
 def iter_documents(root: Path) -> Iterator[Document]:
@@ -93,7 +95,9 @@ def _iter_jsonl(path: Path, id_base: Path) -> Iterator[Document]:
                 or obj.get("doc_id")
                 or f"{_doc_id(path, id_base)}:{line_no}"
             )
-            yield Document(doc_id=str(doc_id), path=path, text=text)
+            yield Document(
+                doc_id=str(doc_id), path=path, text=text, source_line=line_no
+            )
 
 
 def _text_from_json(obj: object) -> str:

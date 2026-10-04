@@ -1,6 +1,9 @@
 # Corpora never go in git
 data/
 
+# Per-run crawler log (the lab failure excerpt lives in docs/)
+crawl.log
+
 # Python
 .venv/
 .venv-nogil/

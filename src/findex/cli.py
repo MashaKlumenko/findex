@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import multiprocessing
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -16,11 +18,15 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from findex.crawler.run import render_stats, run_crawl
 from findex.index import DEFAULT_EXECUTOR, EXECUTORS, build_index_parallel
 from findex.rank import get_scorer, ranked_search
 from findex.search import boolean_search
 from findex.stats import format_bytes
 from findex.store import open_index, save
+from findex.tokenize import tokenize as tokenizer
+
+__all__ = ["app", "tokenizer"]  # noqa: F401  re-export for tests
 
 # Створюємо аплікацію Typer
 app = typer.Typer(help="findex: CLI search engine tool.")
@@ -203,6 +209,70 @@ def stats_command(
     except Exception as e:
         error_console.print(f"Error reading stats: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command(name="crawl")
+def crawl_command(
+    url: str = typer.Argument(
+        ...,
+        help="Seed URL. Only this host is followed unless --allow-domain is set.",
+    ),
+    max_pages: int = typer.Option(500, "--max-pages", help="Stop after N pages."),
+    concurrency: int = typer.Option(
+        10, "--concurrency", help="Workers and the global cap."
+    ),
+    per_host: int = typer.Option(2, "--per-host", help="Cap for one host."),
+    delay: float = typer.Option(0.2, "--delay", help="Gap between hits to one host."),
+    out: Path = typer.Option(
+        Path("data/crawl.jsonl"), "--out", help="JSONL output."
+    ),
+    log_path: Path = typer.Option(Path("crawl.log"), "--log", help="Status log."),
+    timeout: float = typer.Option(10.0, "--timeout", help="Request timeout."),
+    allow_domain: list[str] = typer.Option(
+        [], "--allow-domain", help="Extra host. Repeatable."
+    ),
+    debug: bool = typer.Option(False, "--debug", help="Warn if the loop blocks."),
+    quiet: bool = typer.Option(False, "--quiet", help="Skip the live counters."),
+) -> None:
+    """Fetch pages concurrently and stream them as JSON lines.
+
+    Indexing stays a separate ``findex index`` run. Tokenizing inside the
+    event loop would stall every in-flight request.
+    """
+    progress = not quiet and console.is_terminal
+
+    async def _go():
+        return await run_crawl(
+            [url],
+            out=out,
+            log_path=log_path,
+            max_pages=max_pages,
+            concurrency=concurrency,
+            per_host=per_host,
+            min_delay=delay,
+            timeout=timeout,
+            allowed_domains=allow_domain or None,
+            console=console,
+            progress=progress,
+        )
+
+    started = time.perf_counter()
+    try:
+        stats = asyncio.run(_go(), debug=debug)
+    except KeyboardInterrupt:
+        error_console.print("crawl interrupted")
+        raise typer.Exit(code=130) from None
+    except Exception:
+        error_console.print(traceback.format_exc())
+        raise typer.Exit(code=1) from None
+
+    wall = time.perf_counter() - started
+    summary = render_stats(stats)
+    summary.title = "Crawl finished"
+    summary.add_row("Wall", f"{wall:.3f} s")
+    summary.add_row("Wrote", str(out))
+    summary.add_row("Log", str(log_path))
+    console.print(summary)
 
 
 if __name__ == "__main__":
